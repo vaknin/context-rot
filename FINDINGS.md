@@ -24,7 +24,16 @@ The 190k figure is a quality cutoff the user set, not a window limit. Nothing me
 - Cost of that call: about $0.22 at list price.
 
 - 2026-10-04, probe 2 (`PROBE = 2` in rot.py): the canary port is superseded by a later "Update" needle, the old port has its own decoy owner, and 3 decoy services with ports and owners are spread through the log. Single checks at 70k (69.9k actual) and 300k (295.9k actual) both scored 3/3. Probe-1 rows are in `results-probe1.jsonl`. `report` groups by (probe, level) and shows recall by update-needle depth.
-- Approved sweep, not yet run (the auto-mode classifier blocked it as a spending action, so the user starts it): `python3 rot.py run --levels 70000,150000,300000 --trials 5 --jobs 2 && python3 rot.py run --levels 600000 --trials 3 --jobs 2 && python3 rot.py report`, about 4.4M tokens, about $18 at list price.
+- **Sweep 2026-10-04 (probe 2), 18 trials, $17.59 list: no drop at all.**
+
+  | level | ctx avg | n | recall | 2-hop | rule | all3 | 95% CI |
+  |---|---|---|---|---|---|---|---|
+  | 70k | 70.1k | 5 | 1.00 | 1.00 | 1.00 | 1.00 | [0.57, 1.00] |
+  | 150k | 150.8k | 5 | 1.00 | 1.00 | 1.00 | 1.00 | [0.57, 1.00] |
+  | 300k | 302.2k | 5 | 1.00 | 1.00 | 1.00 | 1.00 | [0.57, 1.00] |
+  | 600k | 592.5k | 3 | 1.00 | 1.00 | 1.00 | 1.00 | [0.44, 1.00] |
+
+  Conclusion: needle-style recall, even with superseded facts and decoys, stays at 100% up to about 600k on claude-sonnet-5-5. It cannot justify the 150k/190k thresholds either way. Caveat: the update needle always comes after the original, so it is mostly in the mid or late part of the log (no early-depth samples). Any measurable threshold has to come from a work-quality probe (an agentic task in a long context), not from recall.
 
 ## Open problems
 1. **RESOLVED 2026-10-04: overhead.** The claude.ai MCP connectors (Gmail, Drive, Calendar, IBKR, ...) load even with `--tools ""` and add 42-65k tokens, varying call to call. `--strict-mcp-config` drops it to a stable 411 (4/4 calls); `call()` now passes it. Recalibrated: 2.14 chars/token (the old 1.47 was skewed by the connector overhead). Old note follows.
@@ -32,7 +41,7 @@ The 190k figure is a quality cutoff the user set, not a window limit. Nothing me
 2. **RESOLVED: chars/token** (2.14, see above). Old note: Calibration gives about 1.47 chars/token for Rust/TOML/Markdown filler, which is denser than expected. It may be the new tokenizer, or it may be skewed by the overhead issue above. Recheck once the overhead is understood.
 3. The single call gives no variance estimate. Trials per level need to be 10-20 before any conclusion.
 
-## Next steps
+## Next steps (as of 2026-10-04: steps 1-3 done; the sweep was flat, so step 4 applies)
 1. Resolve the overhead question (cheap: a few tiny calls).
 2. Run one call at each of 70k, 150k, 300k and check the actual `ctx_tokens` against nominal. Fix calibration if off.
 3. With the user's go-ahead, run the pilot: `python3 rot.py run --levels 70000,150000,300000,600000 --trials 10 --jobs 2`, then `python3 rot.py report`. The run is resumable (it skips done level/trial pairs).
