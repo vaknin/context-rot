@@ -88,7 +88,7 @@ def make_prompt(level_tokens, seed, cpt):
 
 def call(system, user):
     cmd = ["claude", "-p", "--model", MODEL, "--setting-sources", "", "--tools", "", "--disable-slash-commands",
-           "--no-session-persistence", "--output-format", "json", "--system-prompt", system]
+           "--no-session-persistence", "--strict-mcp-config", "--output-format", "json", "--system-prompt", system]
     r = subprocess.run(cmd, input=user, capture_output=True, text=True, timeout=1500, cwd=HERE / "cwd")
     if r.returncode != 0:
         raise RuntimeError(r.stderr[-500:] or r.stdout[-500:])
