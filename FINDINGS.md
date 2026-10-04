@@ -38,6 +38,15 @@ The 190k figure is a quality cutoff the user set, not a window limit. Nothing me
 - **Opus sweep 2026-10-04 (probe 2, same design), 18 trials, $35.21 list (about $8 per 1M tokens, twice Sonnet): also flat.** 70k 70.2k actual, 150k 151.0k, 300k 302.4k, 600k 592.7k; every trial scored 3/3 (95% CI [0.57, 1.00], or [0.44, 1.00] at 600k). Rows are tagged `model`; `report` groups by model, probe and level.
 - Bottom line: neither model shows measurable recall rot up to 600k. A threshold needs the work-quality probe.
 
+- **Probe 3 (2026-10-04, Opus, $56.76 list):** a coding task. The spec for `price(order)` is 9 user notes scattered through the log (one later note changes the bulk rule); the reply's code runs against 40 cases checked by a reference implementation. Every trial scored 40/40 with the ack correct: 70k 4/4, 200k 4/4, 400k 8/8 (CI [0.68, 1.00]), 700k 4/4.
+
+## VERDICT (2026-10-04)
+**Handoff 400k, warn 320k** (today: 190k and 150k).
+- Quality never limited it: 54 Opus trials across three probes (recall, superseded facts plus decoys, scattered-spec coding) found no drop anywhere from 70k to 700k. 400k is the best-sampled level (8/8 on the hardest probe, plus 5/5 recall at 300k and 3/3 at 600k), and it leaves about 300k of tested headroom below 700k for a session that runs past the warning.
+- The cap is about cost: every turn re-reads the whole context, so a turn at 400k uses about 5.7x the quota of one at 70k. Above 400k the extra cost buys nothing measured.
+- Limits: these are single-shot tests. Real sessions also pile up stale file versions and long tool-use chains, which these probes only partly cover. If long sessions start to go wrong in practice, drop the handoff to 300k.
+- Warn = 0.8 x handoff, the same ratio as today.
+
 ## Open problems
 1. **RESOLVED 2026-10-04: overhead.** The claude.ai MCP connectors (Gmail, Drive, Calendar, IBKR, ...) load even with `--tools ""` and add 42-65k tokens, varying call to call. `--strict-mcp-config` drops it to a stable 411 (4/4 calls); `call()` now passes it. Recalibrated: 2.14 chars/token (the old 1.47 was skewed by the connector overhead). Old note follows.
    **Overhead was unexplained.** A near-empty call (`"say pong"`) has measured about 64,760 tokens of context (cache_read) in some runs and 411 in others (`calib.json` stores `overhead: 411`). The per-call `usage` is what counts, and the harness records `ctx_tokens` per trial, so the table can use measured sizes. But the nominal level is computed as `(level - OVERHEAD) * chars_per_token`, so if overhead is really 64k the lowest reachable level is about 65k and the calibration is off. First step tomorrow: run the near-empty call 3-4 times and see what drives the 64k (candidates: tool/MCP schemas, deferred tool list, claude.ai connectors loaded despite `--tools ""`; try `--strict-mcp-config`, or an empty `--mcp-config`).
