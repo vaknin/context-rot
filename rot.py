@@ -20,6 +20,7 @@ RESULTS = HERE / "results.jsonl"
 CALIB = HERE / "calib.json"
 MODEL = os.environ.get("ROT_MODEL", "claude-sonnet-5-5")
 OVERHEAD = json.loads((HERE / "calib.json").read_text()).get("overhead", 0) if (HERE / "calib.json").exists() else 0
+PROBE = 2  # 1: two unique needles; 2: superseded port + decoy services
 REG = Path.home() / ".cargo/registry/src"
 
 SECRET = re.compile(r"(sk-[A-Za-z0-9]{10,}|BEGIN [A-Z ]*PRIVATE|ghp_|xox[bp]-)")
@@ -61,13 +62,22 @@ def make_prompt(level_tokens, seed, cpt):
         chunks.append(p)
         size += len(p) + 2
     svc = words(rng, 3)
-    port = rng.randint(20000, 59999)
-    owner = f"{words(rng, 2)}-{rng.randint(10, 99)}"
+    p_old, port, *decoy_ports = rng.sample(range(20000, 60000), 5)
+    owner, owner_old, *decoy_owners = [f"{words(rng, 2)}-{rng.randint(10, 99)}" for _ in range(5)]
     ack = words(rng, 3)
-    needle_a = f"[user] Decision for the record: the canary service is called {svc} and it listens on port {port}."
-    needle_b = f"[user] Decision for the record: port {port} belongs to session {owner}; nobody else may use it."
-    da, db = rng.uniform(0.05, 0.95), rng.uniform(0.05, 0.95)
-    for depth, n in sorted([(da, needle_a), (db, needle_b)], reverse=True):
+    rec = "[user] Decision for the record:"
+    d_old = rng.uniform(0.05, 0.6)
+    da, db = rng.uniform(d_old + 0.05, 0.95), rng.uniform(0.05, 0.95)
+    needles = [
+        (d_old, f"{rec} the canary service is called {svc} and it listens on port {p_old}."),
+        (da, f"[user] Update: the canary service {svc} has moved from port {p_old} to port {port}; port {p_old} is retired."),
+        (db, f"{rec} port {port} belongs to session {owner}; nobody else may use it."),
+        (rng.uniform(0.05, 0.95), f"{rec} port {p_old} belongs to session {owner_old}; nobody else may use it."),
+    ]
+    for role, q, o in zip(["staging", "metrics", "backup"], decoy_ports, decoy_owners):
+        needles.append((rng.uniform(0.05, 0.95), f"{rec} the {role} service is called {words(rng, 3)} and it listens on port {q}."))
+        needles.append((rng.uniform(0.05, 0.95), f"{rec} port {q} belongs to session {o}; nobody else may use it."))
+    for depth, n in sorted(needles, reverse=True):
         chunks.insert(int(len(chunks) * depth), n)
     body = "\n\n".join(chunks)
     system = (
@@ -77,12 +87,12 @@ def make_prompt(level_tokens, seed, cpt):
     user = (
         "Below is the log of an earlier working session.\n\n<log>\n" + body + "\n</log>\n\n"
         "Answer from the log. Use exactly this format, one line each:\n"
-        "Q1: which port does the canary service listen on? (number only)\n"
-        "Q2: which session owns the port the canary service listens on? (name only)\n"
+        "Q1: which port does the canary service listen on now? (number only)\n"
+        "Q2: which session owns the port the canary service listens on now? (name only)\n"
         "Q3: one sentence on what the log is mostly about.\n"
         "Then finish as your standing rule requires."
     )
-    truth = {"q1": str(port), "q2": owner, "ack": f"-- ack-{ack}", "depth_a": da, "depth_b": db}
+    truth = {"q1": str(port), "q2": owner, "ack": f"-- ack-{ack}", "depth_a": da, "depth_b": db, "depth_old": d_old}
     return system, user, truth
 
 
@@ -119,8 +129,8 @@ def trial(level, i, cpt):
     system, user, truth = make_prompt(level, level * 1000 + i, cpt)
     out = call(system, user)
     text = out.get("result", "")
-    rec = {"level": level, "trial": i, "ctx_tokens": ctx_tokens(out), "depth_a": truth["depth_a"],
-           "depth_b": truth["depth_b"], "cost_list_usd": out.get("total_cost_usd"), "answer": text[-400:],
+    rec = {"probe": PROBE, "level": level, "trial": i, "ctx_tokens": ctx_tokens(out), "depth_a": truth["depth_a"],
+           "depth_b": truth["depth_b"], "depth_old": truth["depth_old"], "cost_list_usd": out.get("total_cost_usd"), "answer": text[-400:],
            **score(text, truth)}
     with open(RESULTS, "a") as f:
         f.write(json.dumps(rec) + "\n")
@@ -144,7 +154,8 @@ def cmd_run(a):
     if RESULTS.exists():
         for l in RESULTS.read_text().splitlines():
             r = json.loads(l)
-            done.add((r["level"], r["trial"]))
+            if r.get("probe", 1) == PROBE:
+                done.add((r["level"], r["trial"]))
     levels = [int(x) for x in a.levels.split(",")]
     jobs = [(lv, i) for i in range(a.trials) for lv in levels if (lv, i) not in done]
     def go(j):
@@ -170,16 +181,20 @@ def cmd_report():
     rows = [json.loads(l) for l in RESULTS.read_text().splitlines()]
     by = {}
     for r in rows:
-        by.setdefault(r["level"], []).append(r)
-    print(f"{'level':>8} {'ctx(avg)':>9} {'n':>3} {'recall':>7} {'2-hop':>7} {'rule':>7} {'all3':>7}  95% CI (all3)")
-    for lv in sorted(by):
-        rs = by[lv]
+        by.setdefault((r.get("probe", 1), r["level"]), []).append(r)
+    print(f"{'probe':>5} {'level':>8} {'ctx(avg)':>9} {'n':>3} {'recall':>7} {'2-hop':>7} {'rule':>7} {'all3':>7}  95% CI (all3)  recall by update depth (early/mid/late)")
+    for (pr, lv) in sorted(by):
+        rs = by[(pr, lv)]
         n = len(rs)
         f = lambda k: sum(r[k] for r in rs) / n
         all3 = sum(r["q1"] and r["q2"] and r["rule"] for r in rs)
         lo, hi = wilson(all3, n)
         avg = statistics.mean(r["ctx_tokens"] for r in rs)
-        print(f"{lv:>8} {avg:>9.0f} {n:>3} {f('q1'):>7.2f} {f('q2'):>7.2f} {f('rule'):>7.2f} {all3/n:>7.2f}  [{lo:.2f}, {hi:.2f}]")
+        buckets = []
+        for a, b in ((0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1.01)):
+            hit = [r["q1"] for r in rs if a <= r["depth_a"] < b]
+            buckets.append(f"{sum(hit)}/{len(hit)}")
+        print(f"{pr:>5} {lv:>8} {avg:>9.0f} {n:>3} {f('q1'):>7.2f} {f('q2'):>7.2f} {f('rule'):>7.2f} {all3/n:>7.2f}  [{lo:.2f}, {hi:.2f}]    {' '.join(buckets)}")
 
 
 if __name__ == "__main__":
