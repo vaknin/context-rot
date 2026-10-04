@@ -18,7 +18,7 @@ HERE = Path(__file__).parent
 POOL = HERE / "pool.json"
 RESULTS = HERE / "results.jsonl"
 CALIB = HERE / "calib.json"
-MODEL = os.environ.get("ROT_MODEL", "claude-sonnet-5-5")
+MODEL = os.environ.get("ROT_MODEL", "claude-opus-5-5")
 OVERHEAD = json.loads((HERE / "calib.json").read_text()).get("overhead", 0) if (HERE / "calib.json").exists() else 0
 PROBE = 2  # 1: two unique needles; 2: superseded port + decoy services
 REG = Path.home() / ".cargo/registry/src"
@@ -129,7 +129,7 @@ def trial(level, i, cpt):
     system, user, truth = make_prompt(level, level * 1000 + i, cpt)
     out = call(system, user)
     text = out.get("result", "")
-    rec = {"probe": PROBE, "level": level, "trial": i, "ctx_tokens": ctx_tokens(out), "depth_a": truth["depth_a"],
+    rec = {"model": MODEL, "probe": PROBE, "level": level, "trial": i, "ctx_tokens": ctx_tokens(out), "depth_a": truth["depth_a"],
            "depth_b": truth["depth_b"], "depth_old": truth["depth_old"], "cost_list_usd": out.get("total_cost_usd"), "answer": text[-400:],
            **score(text, truth)}
     with open(RESULTS, "a") as f:
@@ -154,7 +154,7 @@ def cmd_run(a):
     if RESULTS.exists():
         for l in RESULTS.read_text().splitlines():
             r = json.loads(l)
-            if r.get("probe", 1) == PROBE:
+            if r.get("probe", 1) == PROBE and r.get("model", "claude-sonnet-5-5") == MODEL:
                 done.add((r["level"], r["trial"]))
     levels = [int(x) for x in a.levels.split(",")]
     jobs = [(lv, i) for i in range(a.trials) for lv in levels if (lv, i) not in done]
@@ -181,10 +181,10 @@ def cmd_report():
     rows = [json.loads(l) for l in RESULTS.read_text().splitlines()]
     by = {}
     for r in rows:
-        by.setdefault((r.get("probe", 1), r["level"]), []).append(r)
-    print(f"{'probe':>5} {'level':>8} {'ctx(avg)':>9} {'n':>3} {'recall':>7} {'2-hop':>7} {'rule':>7} {'all3':>7}  95% CI (all3)  recall by update depth (early/mid/late)")
-    for (pr, lv) in sorted(by):
-        rs = by[(pr, lv)]
+        by.setdefault((r.get("model", "claude-sonnet-5-5"), r.get("probe", 1), r["level"]), []).append(r)
+    print(f"{'model':>18} {'probe':>5} {'level':>8} {'ctx(avg)':>9} {'n':>3} {'recall':>7} {'2-hop':>7} {'rule':>7} {'all3':>7}  95% CI (all3)  recall by update depth (early/mid/late)")
+    for (md, pr, lv) in sorted(by):
+        rs = by[(md, pr, lv)]
         n = len(rs)
         f = lambda k: sum(r[k] for r in rs) / n
         all3 = sum(r["q1"] and r["q2"] and r["rule"] for r in rs)
@@ -194,7 +194,7 @@ def cmd_report():
         for a, b in ((0, 1 / 3), (1 / 3, 2 / 3), (2 / 3, 1.01)):
             hit = [r["q1"] for r in rs if a <= r["depth_a"] < b]
             buckets.append(f"{sum(hit)}/{len(hit)}")
-        print(f"{pr:>5} {lv:>8} {avg:>9.0f} {n:>3} {f('q1'):>7.2f} {f('q2'):>7.2f} {f('rule'):>7.2f} {all3/n:>7.2f}  [{lo:.2f}, {hi:.2f}]    {' '.join(buckets)}")
+        print(f"{md:>18} {pr:>5} {lv:>8} {avg:>9.0f} {n:>3} {f('q1'):>7.2f} {f('q2'):>7.2f} {f('rule'):>7.2f} {all3/n:>7.2f}  [{lo:.2f}, {hi:.2f}]    {' '.join(buckets)}")
 
 
 if __name__ == "__main__":

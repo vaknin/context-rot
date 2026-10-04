@@ -1,7 +1,7 @@
 # Context-rot study: findings so far (updated 2026-10-04)
 
 ## Goal
-Replace the guessed handoff thresholds in dibs (`~/Projects/dibs/src/budget.rs`: warn 150k, handoff 190k, both overridable by `CLAUDE_CONTEXT_WARN_TOKENS` / `CLAUDE_CONTEXT_HANDOFF_TOKENS`) with measured numbers: a table of score vs. context size for the model the user's sessions run on (`claude-sonnet-5-5`, 1M window).
+Replace the guessed handoff thresholds in dibs (`~/Projects/dibs/src/budget.rs`: warn 150k, handoff 190k, both overridable by `CLAUDE_CONTEXT_WARN_TOKENS` / `CLAUDE_CONTEXT_HANDOFF_TOKENS`) with measured numbers: a table of score vs. context size for the model the user's sessions run on: **`claude-opus-5-5`** (1M window). The user said on 2026-10-04 that Sonnet doesn't matter; `rot.py` defaults to Opus (`ROT_MODEL` overrides it)..
 
 The 190k figure is a quality cutoff the user set, not a window limit. Nothing measured backs it yet.
 
@@ -34,6 +34,9 @@ The 190k figure is a quality cutoff the user set, not a window limit. Nothing me
   | 600k | 592.5k | 3 | 1.00 | 1.00 | 1.00 | 1.00 | [0.44, 1.00] |
 
   Conclusion: needle-style recall, even with superseded facts and decoys, stays at 100% up to about 600k on claude-sonnet-5-5. It cannot justify the 150k/190k thresholds either way. Caveat: the update needle always comes after the original, so it is mostly in the mid or late part of the log (no early-depth samples). Any measurable threshold has to come from a work-quality probe (an agentic task in a long context), not from recall.
+
+- **Opus sweep 2026-10-04 (probe 2, same design), 18 trials, $35.21 list (about $8 per 1M tokens, twice Sonnet): also flat.** 70k 70.2k actual, 150k 151.0k, 300k 302.4k, 600k 592.7k; every trial scored 3/3 (95% CI [0.57, 1.00], or [0.44, 1.00] at 600k). Rows are tagged `model`; `report` groups by model, probe and level.
+- Bottom line: neither model shows measurable recall rot up to 600k. A threshold needs the work-quality probe.
 
 ## Open problems
 1. **RESOLVED 2026-10-04: overhead.** The claude.ai MCP connectors (Gmail, Drive, Calendar, IBKR, ...) load even with `--tools ""` and add 42-65k tokens, varying call to call. `--strict-mcp-config` drops it to a stable 411 (4/4 calls); `call()` now passes it. Recalibrated: 2.14 chars/token (the old 1.47 was skewed by the connector overhead). Old note follows.
